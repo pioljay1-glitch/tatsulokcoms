@@ -54,12 +54,12 @@ export default function App() {
   };
 
   return (
-    <div className="app-layout">
-      <aside className="sidebar">
-        <div className="sidebar-header">TATSULOKComs</div>
-        <div className="channel-list">
-          <div className="channel-section">
-            <div className="channel-section-title">Text channels</div>
+    <div className={'app-layout'}>
+      <aside className={'sidebar'}>
+        <div className={'sidebar-header'}>TATSULOKComs</div>
+        <div className={'channel-list'}>
+          <div className={'channel-section'}>
+            <div className={'channel-section-title'}>Text channels</div>
             {TEXT_CHANNELS.map((ch) => (
               <button
                 key={ch.id}
@@ -71,8 +71,8 @@ export default function App() {
               </button>
             ))}
           </div>
-          <div className="channel-section">
-            <div className="channel-section-title">Voice channels</div>
+          <div className={'channel-section'}>
+            <div className={'channel-section-title'}>Voice channels</div>
             {VOICE_CHANNELS.map((ch) => (
               <button
                 key={ch.id}
@@ -89,48 +89,48 @@ export default function App() {
             ))}
           </div>
         </div>
-        <div className="user-bar">
-          <div className="avatar">
+        <div className={'user-bar'}>
+          <div className={'avatar'}>
             <img src={avatarSrc(user)} alt="" />
           </div>
-          <div className="user-info">
-            <div className="name">{user?.displayName}</div>
-            <div className="status">{connected ? 'Online' : 'Connecting...'}</div>
+          <div className={'user-info'}>
+            <div className={'name'}>{user?.displayName}</div>
+            <div className={'status'}>{connected ? 'Online' : 'Connecting...'}</div>
           </div>
-          <div className="user-actions">
+          <div className={'user-actions'}>
             <button type="button" title="Settings" onClick={() => setShowProfile(true)}>Settings</button>
             <button type="button" title="Log out" onClick={handleLogout}>Logout</button>
           </div>
         </div>
       </aside>
-      <main className="main-area">
-        <div className="channel-header">
+      <main className={'main-area'}>
+        <div className={'channel-header'}>
           <span>#</span> {currentTextChannel}
         </div>
-        <div className="messages">
+        <div className={'messages'}>
           {messages.length === 0 && (
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No messages yet. Say hello!</p>
           )}
           {messages.map((m) => (
-            <div key={m.id} className="message">
-              <div className="avatar">
+            <div key={m.id} className={'message'}>
+              <div className={'avatar'}>
                 <img src={avatarSrc({ displayName: m.displayName, avatarUrl: m.avatarUrl })} alt="" />
               </div>
               <div>
-                <div className="meta">
+                <div className={'meta'}>
                   <strong>{m.displayName}</strong>
                   <span>@{m.username}</span>
                   {' · '}
                   {new Date(m.timestamp).toLocaleTimeString()}
                 </div>
-                <div className="body">{m.text}</div>
+                <div className={'body'}>{m.text}</div>
               </div>
             </div>
           ))}
           <div ref={messagesEndRef} />
         </div>
         {currentVoiceChannel && (
-          <div className="voice-bar">
+          <div className={'voice-bar'}>
             <span>
               Connected to <strong>{currentVoiceChannel}</strong>
               {voicePeers.length > 0 ? ` · ${voicePeers.length} other(s)` : ''}
@@ -138,7 +138,7 @@ export default function App() {
             <button type="button" onClick={leaveVoice}>Disconnect</button>
           </div>
         )}
-        <div className="message-input-bar">
+        <div className={'message-input-bar'}>
           <form onSubmit={handleSend}>
             <input
               type="text"
@@ -152,12 +152,12 @@ export default function App() {
           </form>
         </div>
       </main>
-      <aside className="member-sidebar">
+      <aside className={'member-sidebar'}>
         <h3>Online — {presence.length}</h3>
         {presence.map((p) => (
-          <div key={p.userId} className="member-item">
-            <span className="dot" />
-            <div className="avatar" style={{ width: 24, height: 24, fontSize: '0.65rem' }}>
+          <div key={p.userId} className={'member-item'}>
+            <span className={'dot'} />
+            <div className={'avatar'} style={{ width: 24, height: 24, fontSize: '0.65rem' }}>
               <img src={avatarSrc(p)} alt="" />
             </div>
             <span>{p.displayName}</span>
