@@ -38,7 +38,7 @@ export default function Login() {
         {sessionExpired && (
           <div className="error-banner">Your session has expired. Please log in again.</div>
         )}
-        {error && <div className="error-banner">{error}</div>}
+        {error ? <div className={'error-banner'}>{error}</div> : null}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -72,7 +72,7 @@ export default function Login() {
         </form>
 
         <p className="auth-footer">
-          Don't have an account? <Link to="/register">Create one</Link>
+          Don&apos;t have an account? <Link to="/register">Create one</Link>
         </p>
       </div>
     </div>
