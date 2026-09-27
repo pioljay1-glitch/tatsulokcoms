@@ -7,6 +7,7 @@ import {
   setVoiceChannel,
   getPresenceList,
   getSocketUser,
+  getUserSocketIds,
   updateUserProfile,
 } from './presence.js';
 import { registerMusicHandlers, getMusic } from './music.js';
@@ -122,6 +123,18 @@ export function setupSocket(httpServer, sessionMiddleware) {
       }
     });
 
+    const leaveVoiceRoom = () => {
+      const info = getSocketUser(socket.id);
+      if (info?.voiceChannel) {
+        socket.to(`voice:${info.voiceChannel}`).emit('voice:user-left', {
+          userId: user.id, username: user.username, displayName: user.displayName, socketId: socket.id,
+        });
+        socket.leave(`voice:${info.voiceChannel}`);
+        setVoiceChannel(socket.id, null);
+        io.emit('presence:update', getPresenceList());
+      }
+    };
+
     socket.on('voice:join', (channelId) => {
       if (typeof channelId !== 'string') return;
       const prev = getSocketUser(socket.id)?.voiceChannel;
@@ -159,23 +172,75 @@ export function setupSocket(httpServer, sessionMiddleware) {
       io.emit('presence:update', getPresenceList());
     });
 
-    socket.on('voice:leave', () => {
-      const info = getSocketUser(socket.id);
-      if (info?.voiceChannel) {
-        socket.to(`voice:${info.voiceChannel}`).emit('voice:user-left', {
-          userId: user.id, username: user.username, displayName: user.displayName, socketId: socket.id,
-        });
-        socket.leave(`voice:${info.voiceChannel}`);
-        setVoiceChannel(socket.id, null);
-        io.emit('presence:update', getPresenceList());
-      }
-    });
+    socket.on('voice:leave', () => leaveVoiceRoom());
 
     socket.on('voice:signal', ({ to, signal }) => {
       if (!to || !signal) return;
       io.to(to).emit('voice:signal', {
         from: socket.id, userId: user.id, username: user.username, displayName: user.displayName, signal,
       });
+    });
+
+    // ——— Call (1:1) ———
+    socket.on('call:invite', ({ toUserId }) => {
+      if (!toUserId || toUserId === user.id) return;
+      const targets = getUserSocketIds(toUserId);
+      if (!targets.length) {
+        socket.emit('call:error', { error: 'User is offline' });
+        return;
+      }
+      const payload = {
+        fromUserId: user.id,
+        fromUsername: user.username,
+        fromDisplayName: user.displayName,
+        fromAvatarUrl: user.avatarUrl || null,
+        fromSocketId: socket.id,
+      };
+      targets.forEach((sid) => io.to(sid).emit('call:incoming', payload));
+      socket.emit('call:ringing', { toUserId });
+    });
+
+    socket.on('call:accept', ({ fromSocketId }) => {
+      if (!fromSocketId) return;
+      const caller = getSocketUser(fromSocketId);
+      if (!caller) {
+        socket.emit('call:error', { error: 'Caller disconnected' });
+        return;
+      }
+      // Private room for both
+      const ids = [user.id, caller.userId].sort();
+      const roomId = `call-${ids[0]}-${ids[1]}`;
+
+      // Tell caller accepted
+      io.to(fromSocketId).emit('call:accepted', {
+        byUserId: user.id,
+        byDisplayName: user.displayName,
+        bySocketId: socket.id,
+        roomId,
+      });
+
+      // Both join the call voice room via client joining roomId
+      socket.emit('call:joined', { roomId, peerSocketId: fromSocketId });
+      io.to(fromSocketId).emit('call:joined', { roomId, peerSocketId: socket.id });
+    });
+
+    socket.on('call:decline', ({ fromSocketId }) => {
+      if (fromSocketId) {
+        io.to(fromSocketId).emit('call:declined', {
+          byUserId: user.id,
+          byDisplayName: user.displayName,
+        });
+      }
+    });
+
+    socket.on('call:end', ({ peerSocketId }) => {
+      if (peerSocketId) {
+        io.to(peerSocketId).emit('call:ended', {
+          byUserId: user.id,
+          byDisplayName: user.displayName,
+        });
+      }
+      leaveVoiceRoom();
     });
 
     registerMusicHandlers(socket, io, user, getSocketUser);
