@@ -49,7 +49,10 @@ export default function App() {
   const { user, logout } = useAuth();
   const {
     connected, presence, messages, currentTextChannel, currentVoiceChannel, voicePeers,
-    music, musicError, joinTextChannel, sendMessage, joinVoice, pauseMusic, resumeMusic, stopMusic,
+    music, musicError, joinTextChannel, sendMessage, joinVoice,
+    pauseMusic, resumeMusic, stopMusic,
+    incomingCall, outgoingCall, callError,
+    startCall, acceptCall, declineCall, endCall,
   } = useSocket();
   const { micEnabled, camEnabled, localStream, remoteStreams, error: mediaError, toggleMic, toggleCam, hangUp, inCall } = useWebRTC();
   const [text, setText] = useState('');
@@ -78,6 +81,13 @@ export default function App() {
     await logout();
   };
 
+  const handleHangUp = () => {
+    endCall();
+    hangUp();
+  };
+
+  const isCallRoom = currentVoiceChannel && String(currentVoiceChannel).startsWith('call-');
+
   return (
     <div className="app-layout">
       <aside className="sidebar">
@@ -96,7 +106,7 @@ export default function App() {
             {VOICE_CHANNELS.map((ch) => (
               <button key={ch.id} type="button"
                 className={currentVoiceChannel === ch.id ? 'channel-item active' : 'channel-item'}
-                onClick={() => { if (currentVoiceChannel === ch.id) hangUp(); else joinVoice(ch.id); }}>
+                onClick={() => { if (currentVoiceChannel === ch.id) handleHangUp(); else joinVoice(ch.id); }}>
                 Voice: {ch.name}{currentVoiceChannel === ch.id ? ' (connected)' : ''}
               </button>
             ))}
@@ -120,7 +130,7 @@ export default function App() {
         <div className="messages">
           {messages.length === 0 && (
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Join a voice channel, then /play with a YouTube link — music auto-plays.
+              Paste a YouTube link to play music in-app. Use Call on online users for 1:1 calls.
             </p>
           )}
           {messages.map((m) => (
@@ -149,11 +159,12 @@ export default function App() {
 
         <MusicPlayer music={music} onPause={pauseMusic} onResume={resumeMusic} onStop={stopMusic} />
         {musicError && <div className="error-banner music-error">{musicError}</div>}
+        {callError && <div className="error-banner music-error">{callError}</div>}
 
         {inCall && (
           <div className="voice-bar">
             <span>
-              Connected to <strong>{currentVoiceChannel}</strong>
+              {isCallRoom ? 'In call' : <>Connected to <strong>{currentVoiceChannel}</strong></>}
               {voicePeers.length > 0 ? ` · ${voicePeers.length} other(s)` : ''}
               {mediaError ? ` · ${mediaError}` : ''}
             </span>
@@ -164,14 +175,20 @@ export default function App() {
               <button type="button" className={camEnabled ? '' : 'secondary'} onClick={toggleCam}>
                 {camEnabled ? 'Cam On' : 'Cam Off'}
               </button>
-              <button type="button" className="danger" onClick={hangUp}>Disconnect</button>
+              <button type="button" className="danger" onClick={handleHangUp}>
+                {isCallRoom ? 'End Call' : 'Disconnect'}
+              </button>
             </div>
           </div>
         )}
 
+        {outgoingCall && (
+          <div className="call-status-bar">Calling… <button type="button" className="danger" onClick={endCall}>Cancel</button></div>
+        )}
+
         <div className="message-input-bar">
           <form onSubmit={handleSend}>
-            <input type="text" placeholder={`Message #${currentTextChannel}  ·  /play <youtube link>`}
+            <input type="text" placeholder={`Message #${currentTextChannel}  ·  paste YouTube link to play`}
               value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} disabled={!connected} />
             <button type="submit" disabled={!connected || !text.trim() || sending}>Send</button>
           </form>
@@ -186,18 +203,44 @@ export default function App() {
             <div className="avatar" style={{ width: 24, height: 24, fontSize: '0.65rem' }}>
               <img src={avatarSrc(p)} alt="" />
             </div>
-            <span>{p.displayName}</span>
+            <span className="member-name">{p.displayName}</span>
+            {p.userId !== user?.id && (
+              <button
+                type="button"
+                className="call-btn"
+                title="Call"
+                disabled={!!incomingCall || !!outgoingCall || inCall}
+                onClick={() => startCall(p.userId)}
+              >
+                Call
+              </button>
+            )}
           </div>
         ))}
         <div style={{ marginTop: '1.5rem', padding: '0 0.35rem' }}>
-          <h3>Music commands</h3>
+          <h3>Music</h3>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Join voice, then:
-            <br />/play youtube-link
+            Paste YouTube link + Send — plays in-app.
             <br />/pause /resume /stop
           </p>
         </div>
       </aside>
+
+      {incomingCall && (
+        <div className="call-modal-overlay">
+          <div className="call-modal">
+            <div className="call-modal-avatar">
+              <img src={avatarSrc({ displayName: incomingCall.fromDisplayName, avatarUrl: incomingCall.fromAvatarUrl })} alt="" />
+            </div>
+            <h2>Incoming call</h2>
+            <p>{incomingCall.fromDisplayName} is calling you</p>
+            <div className="call-modal-actions">
+              <button type="button" className="danger" onClick={declineCall}>Decline</button>
+              <button type="button" onClick={acceptCall}>Accept</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
