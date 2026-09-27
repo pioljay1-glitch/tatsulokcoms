@@ -1,0 +1,25 @@
+{
+  "name": "tatsulokcoms",
+  "version": "1.0.0",
+  "description": "TATSULOKComs - Real-time communication platform with persistent user accounts",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "cd client && npm run build && cd ../server && npm run build",
+    "start": "cd server && npm start",
+    "db:generate": "cd server && npx prisma generate",
+    "db:migrate": "cd server && npx prisma migrate deploy",
+    "db:migrate:dev": "cd server && npx prisma migrate dev",
+    "db:push": "cd server && npx prisma db push",
+    "db:studio": "cd server && npx prisma studio",
+    "postinstall": "cd server && npm install && cd ../client && npm install"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
