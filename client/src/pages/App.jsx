@@ -16,16 +16,8 @@ const VOICE_CHANNELS = [
 export default function App() {
   const { user, logout } = useAuth();
   const {
-    connected,
-    presence,
-    messages,
-    currentTextChannel,
-    currentVoiceChannel,
-    voicePeers,
-    joinTextChannel,
-    sendMessage,
-    joinVoice,
-    leaveVoice,
+    connected, presence, messages, currentTextChannel, currentVoiceChannel,
+    voicePeers, joinTextChannel, sendMessage, joinVoice, leaveVoice,
   } = useSocket();
 
   const [text, setText] = useState('');
@@ -72,7 +64,7 @@ export default function App() {
               <button
                 key={ch.id}
                 type="button"
-                className={`channel-item ${currentTextChannel === ch.id ? 'active' : ''}`}
+                className={currentTextChannel === ch.id ? 'channel-item active' : 'channel-item'}
                 onClick={() => joinTextChannel(ch.id)}
               >
                 # {ch.name}
@@ -85,44 +77,39 @@ export default function App() {
               <button
                 key={ch.id}
                 type="button"
-                className={`channel-item ${currentVoiceChannel === ch.id ? 'active' : ''}`}
+                className={currentVoiceChannel === ch.id ? 'channel-item active' : 'channel-item'}
                 onClick={() => {
                   if (currentVoiceChannel === ch.id) leaveVoice();
                   else joinVoice(ch.id);
                 }}
               >
-                {'\u{1F50A}'} {ch.name}
-                {currentVoiceChannel === ch.id && ' \u2713'}
+                Voice: {ch.name}
+                {currentVoiceChannel === ch.id ? ' (connected)' : ''}
               </button>
             ))}
           </div>
         </div>
-
         <div className="user-bar">
           <div className="avatar">
             <img src={avatarSrc(user)} alt="" />
           </div>
           <div className="user-info">
             <div className="name">{user?.displayName}</div>
-            <div className="status">{connected ? 'Online' : 'Connecting…'}</div>
+            <div className="status">{connected ? 'Online' : 'Connecting...'}</div>
           </div>
           <div className="user-actions">
-            <button type="button" title="Settings" onClick={() => setShowProfile(true)}>\u2699</button>
-            <button type="button" title="Log out" onClick={handleLogout}>\u238B</button>
+            <button type="button" title="Settings" onClick={() => setShowProfile(true)}>Settings</button>
+            <button type="button" title="Log out" onClick={handleLogout}>Logout</button>
           </div>
         </div>
       </aside>
-
       <main className="main-area">
         <div className="channel-header">
           <span>#</span> {currentTextChannel}
         </div>
-
         <div className="messages">
           {messages.length === 0 && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              No messages yet. Say hello!
-            </p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No messages yet. Say hello!</p>
           )}
           {messages.map((m) => (
             <div key={m.id} className="message">
@@ -133,7 +120,7 @@ export default function App() {
                 <div className="meta">
                   <strong>{m.displayName}</strong>
                   <span>@{m.username}</span>
-                  {' \u00b7 '}
+                  {' · '}
                   {new Date(m.timestamp).toLocaleTimeString()}
                 </div>
                 <div className="body">{m.text}</div>
@@ -142,17 +129,15 @@ export default function App() {
           ))}
           <div ref={messagesEndRef} />
         </div>
-
         {currentVoiceChannel && (
           <div className="voice-bar">
             <span>
               Connected to <strong>{currentVoiceChannel}</strong>
-              {voicePeers.length > 0 && ` \u00b7 ${voicePeers.length} other(s)`}
+              {voicePeers.length > 0 ? ` · ${voicePeers.length} other(s)` : ''}
             </span>
             <button type="button" onClick={leaveVoice}>Disconnect</button>
           </div>
         )}
-
         <div className="message-input-bar">
           <form onSubmit={handleSend}>
             <input
@@ -163,13 +148,10 @@ export default function App() {
               maxLength={2000}
               disabled={!connected}
             />
-            <button type="submit" disabled={!connected || !text.trim() || sending}>
-              Send
-            </button>
+            <button type="submit" disabled={!connected || !text.trim() || sending}>Send</button>
           </form>
         </div>
       </main>
-
       <aside className="member-sidebar">
         <h3>Online — {presence.length}</h3>
         {presence.map((p) => (
@@ -182,12 +164,9 @@ export default function App() {
           </div>
         ))}
         {presence.length === 0 && (
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '0 0.35rem' }}>
-            No one online yet
-          </p>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', padding: '0 0.35rem' }}>No one online yet</p>
         )}
       </aside>
-
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
     </div>
   );
