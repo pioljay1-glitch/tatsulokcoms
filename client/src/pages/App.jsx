@@ -9,38 +9,20 @@ import MusicPlayer from '../components/MusicPlayer';
 const TEXT_CHANNELS = [{ id: 'general', name: 'general' }, { id: 'random', name: 'random' }];
 const VOICE_CHANNELS = [{ id: 'Lobby', name: 'Lobby' }, { id: 'Gaming', name: 'Gaming' }];
 
-function RemoteMedia({ streams }) {
-  const audioRefs = useRef({});
+function RemoteTile({ stream }) {
+  const videoRef = useRef(null);
   useEffect(() => {
-    Object.entries(streams).forEach(([id, stream]) => {
-      let el = audioRefs.current[id];
-      if (!el) {
-        el = document.createElement('audio');
-        el.autoplay = true;
-        el.playsInline = true;
-        document.body.appendChild(el);
-        audioRefs.current[id] = el;
-      }
-      if (el.srcObject !== stream) el.srcObject = stream;
-    });
-    Object.keys(audioRefs.current).forEach((id) => {
-      if (!streams[id]) { audioRefs.current[id]?.remove(); delete audioRefs.current[id]; }
-    });
-  }, [streams]);
-  useEffect(() => () => {
-    Object.values(audioRefs.current).forEach((el) => el.remove());
-    audioRefs.current = {};
-  }, []);
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream;
+    const p = el.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  }, [stream]);
+  const hasVideo = stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
   return (
-    <div className="video-grid">
-      {Object.entries(streams).map(([id, stream]) => {
-        const hasVideo = stream.getVideoTracks().some((t) => t.enabled && t.readyState === 'live');
-        if (!hasVideo) return null;
-        return (
-          <video key={id} autoPlay playsInline className="remote-video"
-            ref={(el) => { if (el && el.srcObject !== stream) el.srcObject = stream; }} />
-        );
-      })}
+    <div className="call-tile">
+      <video ref={videoRef} autoPlay playsInline className={hasVideo ? 'remote-video' : 'remote-video hidden-video'} />
+      {!hasVideo && <div className="call-tile-fallback">Audio</div>}
     </div>
   );
 }
@@ -64,7 +46,11 @@ export default function App() {
   useEffect(() => { joinTextChannel(currentTextChannel || 'general'); }, []); // eslint-disable-line
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   useEffect(() => {
-    if (localVideoRef.current && localStream) localVideoRef.current.srcObject = localStream;
+    const el = localVideoRef.current;
+    if (!el || !localStream) return;
+    if (el.srcObject !== localStream) el.srcObject = localStream;
+    const p = el.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
   }, [localStream, camEnabled]);
 
   const handleSend = async (e) => {
@@ -102,12 +88,12 @@ export default function App() {
             ))}
           </div>
           <div className="channel-section">
-            <div className="channel-section-title">Voice channels</div>
+            <div className="channel-section-title">Voice / Video</div>
             {VOICE_CHANNELS.map((ch) => (
               <button key={ch.id} type="button"
                 className={currentVoiceChannel === ch.id ? 'channel-item active' : 'channel-item'}
                 onClick={() => { if (currentVoiceChannel === ch.id) handleHangUp(); else joinVoice(ch.id); }}>
-                Voice: {ch.name}{currentVoiceChannel === ch.id ? ' (connected)' : ''}
+                Video: {ch.name}{currentVoiceChannel === ch.id ? ' (in call)' : ''}
               </button>
             ))}
           </div>
@@ -130,7 +116,7 @@ export default function App() {
         <div className="messages">
           {messages.length === 0 && (
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Paste a YouTube link to play music in-app. Use Call on online users for 1:1 calls.
+              Call a user or join Video: Lobby. Allow camera + mic so both of you can see and hear each other.
             </p>
           )}
           {messages.map((m) => (
@@ -149,10 +135,18 @@ export default function App() {
         </div>
 
         {inCall && (
-          <div className="media-area">
-            <RemoteMedia streams={remoteStreams} />
-            {camEnabled && localStream && (
-              <video ref={localVideoRef} autoPlay muted playsInline className="local-video" />
+          <div className="media-area call-stage">
+            {Object.entries(remoteStreams).map(([id, stream]) => (
+              <RemoteTile key={id} stream={stream} />
+            ))}
+            {localStream && (
+              <div className="call-tile local-tile">
+                <video ref={localVideoRef} autoPlay muted playsInline className="local-video" />
+                <span className="call-tile-label">You</span>
+              </div>
+            )}
+            {Object.keys(remoteStreams).length === 0 && (
+              <div className="call-waiting">Waiting for the other person…</div>
             )}
           </div>
         )}
@@ -164,7 +158,7 @@ export default function App() {
         {inCall && (
           <div className="voice-bar">
             <span>
-              {isCallRoom ? 'In call' : <>Connected to <strong>{currentVoiceChannel}</strong></>}
+              {isCallRoom ? 'Video call' : <>In <strong>{currentVoiceChannel}</strong></>}
               {voicePeers.length > 0 ? ` · ${voicePeers.length} other(s)` : ''}
               {mediaError ? ` · ${mediaError}` : ''}
             </span>
@@ -176,7 +170,7 @@ export default function App() {
                 {camEnabled ? 'Cam On' : 'Cam Off'}
               </button>
               <button type="button" className="danger" onClick={handleHangUp}>
-                {isCallRoom ? 'End Call' : 'Disconnect'}
+                {isCallRoom ? 'End Call' : 'Leave'}
               </button>
             </div>
           </div>
@@ -188,7 +182,7 @@ export default function App() {
 
         <div className="message-input-bar">
           <form onSubmit={handleSend}>
-            <input type="text" placeholder={`Message #${currentTextChannel}  ·  paste YouTube link to play`}
+            <input type="text" placeholder={`Message #${currentTextChannel}`}
               value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} disabled={!connected} />
             <button type="submit" disabled={!connected || !text.trim() || sending}>Send</button>
           </form>
@@ -208,7 +202,7 @@ export default function App() {
               <button
                 type="button"
                 className="call-btn"
-                title="Call"
+                title="Video call"
                 disabled={!!incomingCall || !!outgoingCall || inCall}
                 onClick={() => startCall(p.userId)}
               >
@@ -217,13 +211,6 @@ export default function App() {
             )}
           </div>
         ))}
-        <div style={{ marginTop: '1.5rem', padding: '0 0.35rem' }}>
-          <h3>Music</h3>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Paste YouTube link + Send — plays in-app.
-            <br />/pause /resume /stop
-          </p>
-        </div>
       </aside>
 
       {incomingCall && (
@@ -232,7 +219,7 @@ export default function App() {
             <div className="call-modal-avatar">
               <img src={avatarSrc({ displayName: incomingCall.fromDisplayName, avatarUrl: incomingCall.fromAvatarUrl })} alt="" />
             </div>
-            <h2>Incoming call</h2>
+            <h2>Incoming video call</h2>
             <p>{incomingCall.fromDisplayName} is calling you</p>
             <div className="call-modal-actions">
               <button type="button" className="danger" onClick={declineCall}>Decline</button>
