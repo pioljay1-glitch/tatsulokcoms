@@ -32,9 +32,25 @@ const server = http.createServer(app);
 // Required on Render so secure cookies work behind the proxy
 app.set('trust proxy', 1);
 
+// Allow YouTube embeds + media so in-app music actually plays
 app.use(helmet({
-  contentSecurityPolicy: isProd ? undefined : false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'", "https://www.youtube.com", "https://www.youtube.com/iframe_api", "https://s.ytimg.com", "https://www.google.com"],
+      "frame-src": ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com"],
+      "child-src": ["'self'", "https://www.youtube.com", "https://www.youtube-nocookie.com", "blob:"],
+      "img-src": ["'self'", "data:", "blob:", "https://i.ytimg.com", "https://*.ytimg.com", "https:"],
+      "media-src": ["'self'", "blob:", "mediastream:", "https:"],
+      "connect-src": ["'self'", "wss:", "ws:", "https:", "https://www.youtube.com"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "font-src": ["'self'", "data:"],
+      "worker-src": ["'self'", "blob:"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
 }));
 
 const clientUrl = process.env.CLIENT_URL || (isProd ? false : 'http://localhost:5173');
