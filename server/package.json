@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --watch src/index.js",
     "build": "npx prisma generate",
-    "start": "node src/index.js",
+    "start": "npx prisma db push --accept-data-loss && node src/index.js",
     "db:generate": "npx prisma generate",
     "db:migrate": "npx prisma migrate deploy",
     "db:migrate:dev": "npx prisma migrate dev",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
+    "prisma": "^6.5.0",
     "bcrypt": "^5.1.1",
     "connect-pg-simple": "^10.0.0",
     "cookie-parser": "^1.4.7",
@@ -27,8 +28,5 @@
     "pg": "^8.13.3",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
-  },
-  "devDependencies": {
-    "prisma": "^6.5.0"
   }
 }

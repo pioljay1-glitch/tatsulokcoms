@@ -17,7 +17,7 @@
     "postinstall": "cd server && npm install && cd ../client && npm install"
   },
   "engines": {
-    "node": ">=18"
+    "node": "20.x"
   },
   "dependencies": {
     "concurrently": "^9.1.0"
