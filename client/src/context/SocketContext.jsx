@@ -4,6 +4,24 @@ import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
 
+function extractYouTubeId(input) {
+  if (!input || typeof input !== 'string') return null;
+  const s = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+  try {
+    const url = new URL(s.startsWith('http') ? s : `https://${s}`);
+    if (url.hostname.includes('youtu.be')) {
+      return url.pathname.slice(1).split('/')[0].split('?')[0] || null;
+    }
+    if (url.hostname.includes('youtube.com')) {
+      return url.searchParams.get('v');
+    }
+  } catch {
+    // not a URL
+  }
+  return null;
+}
+
 export function SocketProvider({ children }) {
   const { user, isAuthenticated, handleAuthError } = useAuth();
   const socketRef = useRef(null);
@@ -80,17 +98,51 @@ export function SocketProvider({ children }) {
       const socket = socketRef.current;
       if (!socket?.connected) return reject(new Error('Not connected'));
       const trimmed = text.trim();
+
       const playMatch = trimmed.match(/^\/play\s+(.+)$/i);
-      if (playMatch) { socket.emit('music:play', { query: playMatch[1].trim() }); resolve({ system: true }); return; }
-      if (/^\/pause$/i.test(trimmed)) { socket.emit('music:pause'); resolve({ system: true }); return; }
-      if (/^\/resume$/i.test(trimmed)) { socket.emit('music:resume'); resolve({ system: true }); return; }
-      if (/^\/(stop|skip)$/i.test(trimmed)) { socket.emit('music:stop'); resolve({ system: true }); return; }
+      if (playMatch) {
+        const query = playMatch[1].trim();
+        const videoId = extractYouTubeId(query);
+        // Optimistic local play IMMEDIATELY (same user gesture as Send) so autoplay works
+        if (videoId) {
+          setMusic({
+            videoId,
+            title: `YouTube ${videoId}`,
+            requestedBy: user?.displayName || 'You',
+            username: user?.username,
+            playing: true,
+            channelId: currentVoiceChannel,
+          });
+          setMusicError(null);
+        }
+        socket.emit('music:play', { query });
+        resolve({ system: true });
+        return;
+      }
+      if (/^\/pause$/i.test(trimmed)) {
+        setMusic((m) => (m ? { ...m, playing: false } : m));
+        socket.emit('music:pause');
+        resolve({ system: true });
+        return;
+      }
+      if (/^\/resume$/i.test(trimmed)) {
+        setMusic((m) => (m ? { ...m, playing: true } : m));
+        socket.emit('music:resume');
+        resolve({ system: true });
+        return;
+      }
+      if (/^\/(stop|skip)$/i.test(trimmed)) {
+        setMusic(null);
+        socket.emit('music:stop');
+        resolve({ system: true });
+        return;
+      }
       socket.emit('message:send', { channelId: currentTextChannel, text }, (res) => {
         if (res?.error) reject(new Error(res.error));
         else resolve(res?.message);
       });
     });
-  }, [currentTextChannel]);
+  }, [currentTextChannel, currentVoiceChannel, user]);
 
   const joinVoice = useCallback((channelId) => {
     const socket = socketRef.current;
@@ -118,9 +170,18 @@ export function SocketProvider({ children }) {
     return () => socket.off('voice:signal', handler);
   }, []);
 
-  const pauseMusic = useCallback(() => socketRef.current?.emit('music:pause'), []);
-  const resumeMusic = useCallback(() => socketRef.current?.emit('music:resume'), []);
-  const stopMusic = useCallback(() => socketRef.current?.emit('music:stop'), []);
+  const pauseMusic = useCallback(() => {
+    setMusic((m) => (m ? { ...m, playing: false } : m));
+    socketRef.current?.emit('music:pause');
+  }, []);
+  const resumeMusic = useCallback(() => {
+    setMusic((m) => (m ? { ...m, playing: true } : m));
+    socketRef.current?.emit('music:resume');
+  }, []);
+  const stopMusic = useCallback(() => {
+    setMusic(null);
+    socketRef.current?.emit('music:stop');
+  }, []);
 
   const value = {
     socket: socketRef.current, connected, presence,
