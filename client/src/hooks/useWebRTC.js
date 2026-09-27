@@ -19,8 +19,7 @@ const ICE_SERVERS = {
 };
 
 export function useWebRTC() {
-  const { currentVoiceChannel, voicePeers, sendSignal, onSignal, leaveVoice, socket } = useSocket();
-  const mySocketId = socket?.id || null;
+  const { currentVoiceChannel, voicePeers, sendSignal, onSignal, leaveVoice, socketId } = useSocket();
 
   const [micEnabled, setMicEnabled] = useState(true);
   const [camEnabled, setCamEnabled] = useState(true);
@@ -37,10 +36,10 @@ export function useWebRTC() {
   const camEnabledRef = useRef(true);
   const audioElsRef = useRef({});
   const myIdRef = useRef(null);
-  myIdRef.current = mySocketId;
+  myIdRef.current = socketId;
 
-  const attachRemoteAudio = useCallback((socketId, stream) => {
-    let el = audioElsRef.current[socketId];
+  const attachRemoteAudio = useCallback((peerId, stream) => {
+    let el = audioElsRef.current[peerId];
     if (!el) {
       el = document.createElement('audio');
       el.autoplay = true;
@@ -48,7 +47,7 @@ export function useWebRTC() {
       el.setAttribute('playsinline', 'true');
       el.volume = 1;
       document.body.appendChild(el);
-      audioElsRef.current[socketId] = el;
+      audioElsRef.current[peerId] = el;
     }
     if (el.srcObject !== stream) el.srcObject = stream;
     const tryPlay = () => {
@@ -59,23 +58,23 @@ export function useWebRTC() {
     stream.getAudioTracks().forEach((t) => { t.enabled = true; t.onunmute = tryPlay; });
   }, []);
 
-  const cleanupPeer = useCallback((socketId) => {
-    const pc = pcsRef.current[socketId];
+  const cleanupPeer = useCallback((peerId) => {
+    const pc = pcsRef.current[peerId];
     if (pc) {
       try { pc.close(); } catch { /* ignore */ }
-      delete pcsRef.current[socketId];
+      delete pcsRef.current[peerId];
     }
-    const el = audioElsRef.current[socketId];
+    const el = audioElsRef.current[peerId];
     if (el) {
       try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
-      delete audioElsRef.current[socketId];
+      delete audioElsRef.current[peerId];
     }
-    delete pendingIceRef.current[socketId];
-    delete makingOfferRef.current[socketId];
-    delete ignoreOfferRef.current[socketId];
+    delete pendingIceRef.current[peerId];
+    delete makingOfferRef.current[peerId];
+    delete ignoreOfferRef.current[peerId];
     setRemoteStreams((prev) => {
       const next = { ...prev };
-      delete next[socketId];
+      delete next[peerId];
       return next;
     });
   }, []);
@@ -96,18 +95,18 @@ export function useWebRTC() {
     setRemoteStreams({});
   }, [cleanupPeer]);
 
-  const flushIce = useCallback(async (socketId, pc) => {
-    const queued = pendingIceRef.current[socketId] || [];
-    pendingIceRef.current[socketId] = [];
+  const flushIce = useCallback(async (peerId, pc) => {
+    const queued = pendingIceRef.current[peerId] || [];
+    pendingIceRef.current[peerId] = [];
     for (const c of queued) {
       try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch { /* ignore */ }
     }
   }, []);
 
-  const getOrCreatePC = useCallback((socketId) => {
-    if (pcsRef.current[socketId]) return pcsRef.current[socketId];
+  const getOrCreatePC = useCallback((peerId) => {
+    if (pcsRef.current[peerId]) return pcsRef.current[peerId];
     const pc = new RTCPeerConnection(ICE_SERVERS);
-    pcsRef.current[socketId] = pc;
+    pcsRef.current[peerId] = pc;
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -118,49 +117,45 @@ export function useWebRTC() {
     pc.ontrack = (event) => {
       const stream = event.streams[0] || new MediaStream([event.track]);
       setRemoteStreams((prev) => {
-        const existing = prev[socketId];
+        const existing = prev[peerId];
         if (existing) {
-          event.track && !existing.getTracks().includes(event.track) && existing.addTrack(event.track);
-          return { ...prev, [socketId]: existing };
+          if (event.track && !existing.getTracks().includes(event.track)) existing.addTrack(event.track);
+          return { ...prev, [peerId]: existing };
         }
-        return { ...prev, [socketId]: stream };
+        return { ...prev, [peerId]: stream };
       });
-      attachRemoteAudio(socketId, stream);
+      attachRemoteAudio(peerId, stream);
     };
 
     pc.onicecandidate = (event) => {
-      if (event.candidate) sendSignal(socketId, { type: 'candidate', candidate: event.candidate });
+      if (event.candidate) sendSignal(peerId, { type: 'candidate', candidate: event.candidate });
     };
 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed') {
         try { pc.restartIce(); } catch { /* ignore */ }
       }
-      if (pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
-        if (pc.connectionState === 'closed') cleanupPeer(socketId);
-      }
+      if (pc.connectionState === 'closed') cleanupPeer(peerId);
     };
 
     pc.onnegotiationneeded = async () => {
       const mine = myIdRef.current;
-      // Only the higher socket id starts offers (prevents glare)
-      if (!mine || mine <= socketId) return;
+      if (!mine || mine <= peerId) return;
       try {
-        makingOfferRef.current[socketId] = true;
+        makingOfferRef.current[peerId] = true;
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        sendSignal(socketId, { type: 'offer', sdp: pc.localDescription });
+        sendSignal(peerId, { type: 'offer', sdp: pc.localDescription });
       } catch (err) {
         console.error('negotiationneeded', err);
       } finally {
-        makingOfferRef.current[socketId] = false;
+        makingOfferRef.current[peerId] = false;
       }
     };
 
     return pc;
   }, [sendSignal, cleanupPeer, attachRemoteAudio]);
 
-  // Get camera + mic as soon as we join a call/channel
   useEffect(() => {
     if (!currentVoiceChannel) {
       stopLocal();
@@ -203,20 +198,18 @@ export function useWebRTC() {
       }
       localStreamRef.current = stream;
       setLocalStream(stream);
-      if (!cancelled && !error) setError(null);
     })();
     return () => { cancelled = true; };
-  }, [currentVoiceChannel, stopLocal]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentVoiceChannel, stopLocal]);
 
-  // Connect to peers only after local media is ready
   useEffect(() => {
-    if (!currentVoiceChannel || !localStream || !mySocketId) return;
+    if (!currentVoiceChannel || !localStream || !socketId) return;
     const peerIds = new Set(voicePeers.map((p) => p.socketId));
     Object.keys(pcsRef.current).forEach((id) => { if (!peerIds.has(id)) cleanupPeer(id); });
     voicePeers.forEach((peer) => {
       getOrCreatePC(peer.socketId);
     });
-  }, [voicePeers, currentVoiceChannel, localStream, mySocketId, getOrCreatePC, cleanupPeer]);
+  }, [voicePeers, currentVoiceChannel, localStream, socketId, getOrCreatePC, cleanupPeer]);
 
   useEffect(() => {
     const unsub = onSignal(async ({ from, signal }) => {
@@ -224,13 +217,12 @@ export function useWebRTC() {
       const pc = getOrCreatePC(from);
       try {
         if (signal.type === 'offer') {
-          const readyForOffer = pc.signalingState === 'stable' || pc.signalingState === 'have-local-offer';
           const offerCollision = makingOfferRef.current[from] || pc.signalingState !== 'stable';
           const polite = (myIdRef.current || '') < from;
           ignoreOfferRef.current[from] = !polite && offerCollision;
           if (ignoreOfferRef.current[from]) return;
-          if (offerCollision && readyForOffer) {
-            await pc.setLocalDescription({ type: 'rollback' });
+          if (offerCollision && pc.signalingState !== 'stable') {
+            try { await pc.setLocalDescription({ type: 'rollback' }); } catch { /* ignore */ }
           }
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
           await flushIce(from, pc);
