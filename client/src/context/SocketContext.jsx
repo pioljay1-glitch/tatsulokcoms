@@ -40,6 +40,7 @@ function isBareYouTubeUrl(text) {
 export function SocketProvider({ children }) {
   const { user, isAuthenticated, handleAuthError } = useAuth();
   const socketRef = useRef(null);
+  const [socketId, setSocketId] = useState(null);
   const [connected, setConnected] = useState(false);
   const [presence, setPresence] = useState([]);
   const [messages, setMessages] = useState({});
@@ -58,6 +59,7 @@ export function SocketProvider({ children }) {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
+        setSocketId(null);
         setConnected(false);
         setPresence([]);
         setVoicePeers([]);
@@ -75,9 +77,13 @@ export function SocketProvider({ children }) {
 
     socket.on('connect', () => {
       setConnected(true);
+      setSocketId(socket.id);
       socket.emit('channel:join', currentTextChannel || 'general');
     });
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', () => {
+      setConnected(false);
+      setSocketId(null);
+    });
     socket.on('connect_error', (err) => {
       if (err.message === 'Unauthorized') handleAuthError({ status: 401 });
     });
@@ -95,8 +101,8 @@ export function SocketProvider({ children }) {
     socket.on('voice:user-joined', (peer) => {
       setVoicePeers((prev) => prev.some((p) => p.socketId === peer.socketId) ? prev : [...prev, peer]);
     });
-    socket.on('voice:user-left', ({ socketId }) => {
-      setVoicePeers((prev) => prev.filter((p) => p.socketId !== socketId));
+    socket.on('voice:user-left', ({ socketId: sid }) => {
+      setVoicePeers((prev) => prev.filter((p) => p.socketId !== sid));
     });
     socket.on('music:state', (state) => { setMusic(state); setMusicError(null); });
     socket.on('music:error', (payload) => setMusicError(payload?.error || 'Music error'));
@@ -140,10 +146,10 @@ export function SocketProvider({ children }) {
 
   const joinTextChannel = useCallback((channelId) => {
     setCurrentTextChannel(channelId);
-    const socket = socketRef.current;
-    if (socket?.connected) {
-      socket.emit('channel:join', channelId);
-      socket.emit('messages:history', { channelId, limit: 50 }, (res) => {
+    const s = socketRef.current;
+    if (s?.connected) {
+      s.emit('channel:join', channelId);
+      s.emit('messages:history', { channelId, limit: 50 }, (res) => {
         if (res?.messages) setMessages((prev) => ({ ...prev, [channelId]: res.messages }));
       });
     }
@@ -164,8 +170,8 @@ export function SocketProvider({ children }) {
 
   const sendMessage = useCallback((text) => {
     return new Promise((resolve, reject) => {
-      const socket = socketRef.current;
-      if (!socket?.connected) return reject(new Error('Not connected'));
+      const s = socketRef.current;
+      if (!s?.connected) return reject(new Error('Not connected'));
       const trimmed = text.trim();
 
       const playMatch = trimmed.match(/^\/play\s+(.+)$/i);
@@ -173,7 +179,7 @@ export function SocketProvider({ children }) {
         const query = playMatch[1].trim();
         const videoId = extractYouTubeId(query);
         if (videoId) startMusicLocal(videoId, query);
-        else socket.emit('music:play', { query });
+        else s.emit('music:play', { query });
         resolve({ system: true });
         return;
       }
@@ -189,24 +195,24 @@ export function SocketProvider({ children }) {
 
       if (/^\/pause$/i.test(trimmed)) {
         setMusic((m) => (m ? { ...m, playing: false } : m));
-        socket.emit('music:pause');
+        s.emit('music:pause');
         resolve({ system: true });
         return;
       }
       if (/^\/resume$/i.test(trimmed)) {
         setMusic((m) => (m ? { ...m, playing: true } : m));
-        socket.emit('music:resume');
+        s.emit('music:resume');
         resolve({ system: true });
         return;
       }
       if (/^\/(stop|skip)$/i.test(trimmed)) {
         setMusic(null);
-        socket.emit('music:stop');
+        s.emit('music:stop');
         resolve({ system: true });
         return;
       }
 
-      socket.emit('message:send', { channelId: currentTextChannel, text }, (res) => {
+      s.emit('message:send', { channelId: currentTextChannel, text }, (res) => {
         if (res?.error) reject(new Error(res.error));
         else resolve(res?.message);
       });
@@ -214,11 +220,11 @@ export function SocketProvider({ children }) {
   }, [currentTextChannel, startMusicLocal]);
 
   const joinVoice = useCallback((channelId) => {
-    const socket = socketRef.current;
-    if (!socket?.connected) return;
-    socket.emit('voice:join', channelId);
+    const s = socketRef.current;
+    if (!s?.connected) return;
+    s.emit('voice:join', channelId);
     setCurrentVoiceChannel(channelId);
-    socket.emit('music:get');
+    s.emit('music:get');
   }, []);
 
   const leaveVoice = useCallback(() => {
@@ -234,10 +240,10 @@ export function SocketProvider({ children }) {
   }, []);
 
   const onSignal = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return () => {};
-    socket.on('voice:signal', handler);
-    return () => socket.off('voice:signal', handler);
+    const s = socketRef.current;
+    if (!s) return () => {};
+    s.on('voice:signal', handler);
+    return () => s.off('voice:signal', handler);
   }, []);
 
   const pauseMusic = useCallback(() => {
@@ -283,13 +289,34 @@ export function SocketProvider({ children }) {
   }, [activeCallPeer]);
 
   const value = {
-    socket: socketRef.current, connected, presence,
-    messages: messages[currentTextChannel] || [], allMessages: messages,
-    currentTextChannel, currentVoiceChannel, voicePeers, music, musicError,
-    incomingCall, outgoingCall, activeCallPeer, callError,
-    joinTextChannel, sendMessage, joinVoice, leaveVoice, sendSignal, onSignal,
-    pauseMusic, resumeMusic, stopMusic,
-    startCall, acceptCall, declineCall, endCall,
+    socket: socketRef.current,
+    socketId,
+    connected,
+    presence,
+    messages: messages[currentTextChannel] || [],
+    allMessages: messages,
+    currentTextChannel,
+    currentVoiceChannel,
+    voicePeers,
+    music,
+    musicError,
+    incomingCall,
+    outgoingCall,
+    activeCallPeer,
+    callError,
+    joinTextChannel,
+    sendMessage,
+    joinVoice,
+    leaveVoice,
+    sendSignal,
+    onSignal,
+    pauseMusic,
+    resumeMusic,
+    stopMusic,
+    startCall,
+    acceptCall,
+    declineCall,
+    endCall,
   };
 
   return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;
