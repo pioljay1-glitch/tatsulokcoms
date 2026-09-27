@@ -20,7 +20,6 @@ model User {
   lastLoginAt  DateTime?
 
   messages     Message[]
-  sessions     Session[]
 
   @@map("users")
 }
