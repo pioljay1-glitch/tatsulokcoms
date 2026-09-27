@@ -29,10 +29,8 @@ if (!process.env.DATABASE_URL) {
 const app = express();
 const server = http.createServer(app);
 
-// Required on Render so secure cookies work behind the proxy
 app.set('trust proxy', 1);
 
-// Allow YouTube embeds + media so in-app music actually plays
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -101,6 +99,7 @@ async function seedChannels() {
   const defaults = [
     { name: 'general', type: 'text', description: 'General chat' },
     { name: 'random', type: 'text', description: 'Random topics' },
+    { name: 'ChatAssistant', type: 'text', description: 'Speaking AI assistant' },
     { name: 'Lobby', type: 'voice', description: 'Main voice lobby' },
     { name: 'Gaming', type: 'voice', description: 'Gaming voice channel' },
   ];
