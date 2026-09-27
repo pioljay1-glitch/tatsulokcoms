@@ -1,17 +1,15 @@
 /**
- * Music-only player.
- * Plays immediately when a YouTube link is sent (user gesture from Send).
+ * In-app music player — audio plays inside TATSULOKComs (no external tab).
  */
 export default function MusicPlayer({ music, onPause, onResume, onStop }) {
   if (!music?.videoId) return null;
 
   const thumb = `https://i.ytimg.com/vi/${music.videoId}/hqdefault.jpg`;
-  const watchUrl = `https://www.youtube.com/watch?v=${music.videoId}`;
 
-  // Direct embed — loads in the same turn as Send so autoplay is allowed
+  // youtube-nocookie + autoplay; CSP now allows this domain
   const embedSrc = music.playing
-    ? `https://www.youtube.com/embed/${music.videoId}?autoplay=1&mute=0&playsinline=1&controls=1&rel=0&modestbranding=1&enablejsapi=1`
-    : `https://www.youtube.com/embed/${music.videoId}?autoplay=0&playsinline=1&controls=1&rel=0&modestbranding=1`;
+    ? `https://www.youtube-nocookie.com/embed/${music.videoId}?autoplay=1&mute=0&playsinline=1&controls=1&rel=0&modestbranding=1&fs=0`
+    : `https://www.youtube-nocookie.com/embed/${music.videoId}?autoplay=0&playsinline=1&controls=1&rel=0&modestbranding=1&fs=0`;
 
   return (
     <div className="music-panel">
@@ -43,11 +41,12 @@ export default function MusicPlayer({ music, onPause, onResume, onStop }) {
           key={`${music.videoId}-${music.playing ? 'on' : 'off'}`}
           title="music"
           src={embedSrc}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           referrerPolicy="strict-origin-when-cross-origin"
           allowFullScreen
         />
       </div>
+      <p className="music-hint">Kung walang tunog: i-off ang silent switch, tapos pindutin ang ▶ sa player sa itaas.</p>
     </div>
   );
 }
