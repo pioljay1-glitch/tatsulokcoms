@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  displayName  String
+  email        String    @unique
+  passwordHash String
+  avatarUrl    String?
+  status       String    @default("offline") // online | offline | away
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  messages     Message[]
+  sessions     Session[]
+
+  @@map("users")
+}
+
+model Session {
+  sid    String   @id
+  sess   Json
+  expire DateTime
+
+  @@index([expire])
+  @@map("session")
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  channelId   String
+  userId      String
+  username    String
+  displayName String
+  text        String
+  timestamp   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, timestamp])
+  @@map("messages")
+}
+
+model Channel {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  type        String   @default("text") // text | voice
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@map("channels")
+}
