@@ -7,19 +7,37 @@ const SocketContext = createContext(null);
 function extractYouTubeId(input) {
   if (!input || typeof input !== 'string') return null;
   const s = input.trim();
-  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+  // strip wrapping quotes
+  const cleaned = s.replace(/^["']|["']$/g, '');
+  if (/^[a-zA-Z0-9_-]{11}$/.test(cleaned)) return cleaned;
   try {
-    const url = new URL(s.startsWith('http') ? s : `https://${s}`);
-    if (url.hostname.includes('youtu.be')) {
-      return url.pathname.slice(1).split('/')[0].split('?')[0] || null;
+    const url = new URL(cleaned.startsWith('http') ? cleaned : `https://${cleaned}`);
+    const host = url.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') {
+      const id = url.pathname.slice(1).split('/')[0].split('?')[0];
+      return id && /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
     }
-    if (url.hostname.includes('youtube.com')) {
-      return url.searchParams.get('v');
+    if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+      const v = url.searchParams.get('v');
+      if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+      // /embed/ID or /shorts/ID
+      const parts = url.pathname.split('/').filter(Boolean);
+      if ((parts[0] === 'embed' || parts[0] === 'shorts' || parts[0] === 'live') && parts[1]) {
+        const id = parts[1].split('?')[0];
+        if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+      }
     }
   } catch {
-    // not a URL
+    // not a URL — try find id in string
+    const m = cleaned.match(/(?:youtu\.be\/|v=|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+    if (m) return m[1];
   }
   return null;
+}
+
+function isBareYouTubeUrl(text) {
+  const t = text.trim();
+  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be|music\.youtube\.com|m\.youtube\.com)\//i.test(t);
 }
 
 export function SocketProvider({ children }) {
@@ -93,32 +111,46 @@ export function SocketProvider({ children }) {
     }
   }, []);
 
+  const startMusicLocal = useCallback((videoId, query) => {
+    setMusic({
+      videoId,
+      title: `YouTube ${videoId}`,
+      requestedBy: user?.displayName || 'You',
+      username: user?.username,
+      playing: true,
+      channelId: currentVoiceChannel,
+    });
+    setMusicError(null);
+    socketRef.current?.emit('music:play', { query: query || videoId });
+  }, [user, currentVoiceChannel]);
+
   const sendMessage = useCallback((text) => {
     return new Promise((resolve, reject) => {
       const socket = socketRef.current;
       if (!socket?.connected) return reject(new Error('Not connected'));
       const trimmed = text.trim();
 
+      // /play <url>
       const playMatch = trimmed.match(/^\/play\s+(.+)$/i);
       if (playMatch) {
         const query = playMatch[1].trim();
         const videoId = extractYouTubeId(query);
-        // Optimistic local play IMMEDIATELY (same user gesture as Send) so autoplay works
-        if (videoId) {
-          setMusic({
-            videoId,
-            title: `YouTube ${videoId}`,
-            requestedBy: user?.displayName || 'You',
-            username: user?.username,
-            playing: true,
-            channelId: currentVoiceChannel,
-          });
-          setMusicError(null);
-        }
-        socket.emit('music:play', { query });
+        if (videoId) startMusicLocal(videoId, query);
+        else socket.emit('music:play', { query });
         resolve({ system: true });
         return;
       }
+
+      // Plain YouTube URL only → auto play as music (no /play needed)
+      if (isBareYouTubeUrl(trimmed)) {
+        const videoId = extractYouTubeId(trimmed);
+        if (videoId) {
+          startMusicLocal(videoId, trimmed);
+          resolve({ system: true });
+          return;
+        }
+      }
+
       if (/^\/pause$/i.test(trimmed)) {
         setMusic((m) => (m ? { ...m, playing: false } : m));
         socket.emit('music:pause');
@@ -137,12 +169,13 @@ export function SocketProvider({ children }) {
         resolve({ system: true });
         return;
       }
+
       socket.emit('message:send', { channelId: currentTextChannel, text }, (res) => {
         if (res?.error) reject(new Error(res.error));
         else resolve(res?.message);
       });
     });
-  }, [currentTextChannel, currentVoiceChannel, user]);
+  }, [currentTextChannel, startMusicLocal]);
 
   const joinVoice = useCallback((channelId) => {
     const socket = socketRef.current;
