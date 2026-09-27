@@ -29,13 +29,14 @@ if (!process.env.DATABASE_URL) {
 const app = express();
 const server = http.createServer(app);
 
-// Security headers
+// Required on Render so secure cookies work behind the proxy
+app.set('trust proxy', 1);
+
 app.use(helmet({
   contentSecurityPolicy: isProd ? undefined : false,
   crossOriginEmbedderPolicy: false,
 }));
 
-// CORS – credentials required for session cookies
 const clientUrl = process.env.CLIENT_URL || (isProd ? false : 'http://localhost:5173');
 app.use(cors({
   origin: clientUrl || true,
@@ -45,7 +46,6 @@ app.use(cors({
 app.use(express.json({ limit: '100kb' }));
 app.use(cookieParser());
 
-// PostgreSQL session store
 const PgSession = connectPgSimple(session);
 const pgPool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -62,26 +62,25 @@ const sessionMiddleware = session({
   resave: false,
   saveUninitialized: false,
   name: 'connect.sid',
+  proxy: true,
   cookie: {
     httpOnly: true,
-    secure: isProd, // HTTPS only in production
-    sameSite: isProd ? 'none' : 'lax', // none required for cross-site on Render if frontend is separate; same origin is fine
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    secure: isProd,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/',
   },
 });
 
 app.use(sessionMiddleware);
 app.use(attachUser);
 
-// Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-// Auth routes
 app.use('/api/auth', authRoutes);
 
-// Seed default channels on startup
 async function seedChannels() {
   const defaults = [
     { name: 'general', type: 'text', description: 'General chat' },
@@ -98,29 +97,24 @@ async function seedChannels() {
   }
 }
 
-// Serve React build in production
 const clientDist = path.join(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 
-// SPA fallback – protect main app routes by letting frontend handle redirects
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api') || req.path.startsWith('/socket')) {
     return next();
   }
   res.sendFile(path.join(clientDist, 'index.html'), (err) => {
     if (err) {
-      // Dev mode – client runs on Vite
       res.status(200).send('TATSULOKComs API is running. Start the client with npm run dev:client');
     }
   });
 });
 
-// Socket.IO with shared session
 setupSocket(server, sessionMiddleware);
 
 async function start() {
   try {
-    // Verify DB connection
     await prisma.$connect();
     console.log('Connected to PostgreSQL');
     await seedChannels();
@@ -137,7 +131,6 @@ async function start() {
 
 start();
 
-// Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down…');
   await prisma.$disconnect();
