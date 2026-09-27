@@ -5,40 +5,39 @@ const ICE_SERVERS = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:80?transport=tcp',
+        'turn:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
 };
 
 export function useWebRTC() {
-  const { currentVoiceChannel, voicePeers, sendSignal, onSignal, leaveVoice } = useSocket();
+  const { currentVoiceChannel, voicePeers, sendSignal, onSignal, leaveVoice, socket } = useSocket();
+  const mySocketId = socket?.id || null;
+
   const [micEnabled, setMicEnabled] = useState(true);
-  const [camEnabled, setCamEnabled] = useState(false);
+  const [camEnabled, setCamEnabled] = useState(true);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({});
   const [error, setError] = useState(null);
 
   const pcsRef = useRef({});
   const localStreamRef = useRef(null);
+  const pendingIceRef = useRef({});
+  const makingOfferRef = useRef({});
+  const ignoreOfferRef = useRef({});
   const micEnabledRef = useRef(true);
-  const camEnabledRef = useRef(false);
+  const camEnabledRef = useRef(true);
   const audioElsRef = useRef({});
-
-  const cleanupPeer = useCallback((socketId) => {
-    const pc = pcsRef.current[socketId];
-    if (pc) {
-      try { pc.close(); } catch {}
-      delete pcsRef.current[socketId];
-    }
-    const el = audioElsRef.current[socketId];
-    if (el) {
-      try { el.pause(); el.srcObject = null; el.remove(); } catch {}
-      delete audioElsRef.current[socketId];
-    }
-    setRemoteStreams((prev) => {
-      const next = { ...prev };
-      delete next[socketId];
-      return next;
-    });
-  }, []);
+  const myIdRef = useRef(null);
+  myIdRef.current = mySocketId;
 
   const attachRemoteAudio = useCallback((socketId, stream) => {
     let el = audioElsRef.current[socketId];
@@ -51,17 +50,33 @@ export function useWebRTC() {
       document.body.appendChild(el);
       audioElsRef.current[socketId] = el;
     }
-    if (el.srcObject !== stream) {
-      el.srcObject = stream;
-    }
-    // Critical for iOS: explicitly play after track arrives
+    if (el.srcObject !== stream) el.srcObject = stream;
     const tryPlay = () => {
       const p = el.play();
       if (p && typeof p.catch === 'function') p.catch(() => {});
     };
     tryPlay();
-    stream.getAudioTracks().forEach((t) => {
-      t.onunmute = tryPlay;
+    stream.getAudioTracks().forEach((t) => { t.enabled = true; t.onunmute = tryPlay; });
+  }, []);
+
+  const cleanupPeer = useCallback((socketId) => {
+    const pc = pcsRef.current[socketId];
+    if (pc) {
+      try { pc.close(); } catch { /* ignore */ }
+      delete pcsRef.current[socketId];
+    }
+    const el = audioElsRef.current[socketId];
+    if (el) {
+      try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
+      delete audioElsRef.current[socketId];
+    }
+    delete pendingIceRef.current[socketId];
+    delete makingOfferRef.current[socketId];
+    delete ignoreOfferRef.current[socketId];
+    setRemoteStreams((prev) => {
+      const next = { ...prev };
+      delete next[socketId];
+      return next;
     });
   }, []);
 
@@ -73,112 +88,174 @@ export function useWebRTC() {
     }
     Object.keys(pcsRef.current).forEach(cleanupPeer);
     pcsRef.current = {};
-    Object.keys(audioElsRef.current).forEach((id) => {
-      const el = audioElsRef.current[id];
-      try { el.pause(); el.srcObject = null; el.remove(); } catch {}
+    Object.values(audioElsRef.current).forEach((el) => {
+      try { el.pause(); el.srcObject = null; el.remove(); } catch { /* ignore */ }
     });
     audioElsRef.current = {};
+    pendingIceRef.current = {};
     setRemoteStreams({});
   }, [cleanupPeer]);
 
-  const getOrCreatePC = useCallback((socketId, isInitiator) => {
+  const flushIce = useCallback(async (socketId, pc) => {
+    const queued = pendingIceRef.current[socketId] || [];
+    pendingIceRef.current[socketId] = [];
+    for (const c of queued) {
+      try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch { /* ignore */ }
+    }
+  }, []);
+
+  const getOrCreatePC = useCallback((socketId) => {
     if (pcsRef.current[socketId]) return pcsRef.current[socketId];
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcsRef.current[socketId] = pc;
+
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current);
       });
     }
+
     pc.ontrack = (event) => {
       const stream = event.streams[0] || new MediaStream([event.track]);
-      if (stream) {
-        setRemoteStreams((prev) => ({ ...prev, [socketId]: stream }));
-        attachRemoteAudio(socketId, stream);
-      }
+      setRemoteStreams((prev) => {
+        const existing = prev[socketId];
+        if (existing) {
+          event.track && !existing.getTracks().includes(event.track) && existing.addTrack(event.track);
+          return { ...prev, [socketId]: existing };
+        }
+        return { ...prev, [socketId]: stream };
+      });
+      attachRemoteAudio(socketId, stream);
     };
+
     pc.onicecandidate = (event) => {
       if (event.candidate) sendSignal(socketId, { type: 'candidate', candidate: event.candidate });
     };
+
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') cleanupPeer(socketId);
+      if (pc.connectionState === 'failed') {
+        try { pc.restartIce(); } catch { /* ignore */ }
+      }
+      if (pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        if (pc.connectionState === 'closed') cleanupPeer(socketId);
+      }
     };
-    if (isInitiator) {
-      pc.createOffer()
-        .then((offer) => pc.setLocalDescription(offer))
-        .then(() => sendSignal(socketId, { type: 'offer', sdp: pc.localDescription }))
-        .catch((err) => console.error('createOffer error', err));
-    }
+
+    pc.onnegotiationneeded = async () => {
+      const mine = myIdRef.current;
+      // Only the higher socket id starts offers (prevents glare)
+      if (!mine || mine <= socketId) return;
+      try {
+        makingOfferRef.current[socketId] = true;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        sendSignal(socketId, { type: 'offer', sdp: pc.localDescription });
+      } catch (err) {
+        console.error('negotiationneeded', err);
+      } finally {
+        makingOfferRef.current[socketId] = false;
+      }
+    };
+
     return pc;
   }, [sendSignal, cleanupPeer, attachRemoteAudio]);
 
+  // Get camera + mic as soon as we join a call/channel
   useEffect(() => {
     if (!currentVoiceChannel) {
       stopLocal();
       setMicEnabled(true);
-      setCamEnabled(false);
+      setCamEnabled(true);
       micEnabledRef.current = true;
-      camEnabledRef.current = false;
+      camEnabledRef.current = true;
       setError(null);
       return;
     }
     let cancelled = false;
     (async () => {
+      let stream = null;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-          video: false,
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
         });
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
-        localStreamRef.current = stream;
-        setLocalStream(stream);
-        setError(null);
       } catch (err) {
-        console.error('getUserMedia error', err);
-        setError(err.name === 'NotAllowedError'
-          ? 'Microphone permission denied. Allow mic access to use voice.'
-          : 'Could not access microphone.');
+        console.warn('video+audio failed, trying audio only', err);
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+            video: false,
+          });
+          setCamEnabled(false);
+          camEnabledRef.current = false;
+          setError('Camera unavailable — audio only. Allow camera for video call.');
+        } catch (err2) {
+          console.error('getUserMedia error', err2);
+          setError(err2.name === 'NotAllowedError'
+            ? 'Allow microphone and camera to use video call.'
+            : 'Could not access camera/microphone.');
+          return;
+        }
       }
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      localStreamRef.current = stream;
+      setLocalStream(stream);
+      if (!cancelled && !error) setError(null);
     })();
     return () => { cancelled = true; };
-  }, [currentVoiceChannel, stopLocal]);
+  }, [currentVoiceChannel, stopLocal]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Connect to peers only after local media is ready
   useEffect(() => {
-    if (!currentVoiceChannel || !localStreamRef.current) return;
+    if (!currentVoiceChannel || !localStream || !mySocketId) return;
     const peerIds = new Set(voicePeers.map((p) => p.socketId));
     Object.keys(pcsRef.current).forEach((id) => { if (!peerIds.has(id)) cleanupPeer(id); });
     voicePeers.forEach((peer) => {
-      if (!pcsRef.current[peer.socketId]) getOrCreatePC(peer.socketId, true);
+      getOrCreatePC(peer.socketId);
     });
-  }, [voicePeers, currentVoiceChannel, getOrCreatePC, cleanupPeer]);
+  }, [voicePeers, currentVoiceChannel, localStream, mySocketId, getOrCreatePC, cleanupPeer]);
 
   useEffect(() => {
     const unsub = onSignal(async ({ from, signal }) => {
       if (!signal || !from) return;
+      const pc = getOrCreatePC(from);
       try {
         if (signal.type === 'offer') {
-          const pc = getOrCreatePC(from, false);
+          const readyForOffer = pc.signalingState === 'stable' || pc.signalingState === 'have-local-offer';
+          const offerCollision = makingOfferRef.current[from] || pc.signalingState !== 'stable';
+          const polite = (myIdRef.current || '') < from;
+          ignoreOfferRef.current[from] = !polite && offerCollision;
+          if (ignoreOfferRef.current[from]) return;
+          if (offerCollision && readyForOffer) {
+            await pc.setLocalDescription({ type: 'rollback' });
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+          await flushIce(from, pc);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           sendSignal(from, { type: 'answer', sdp: pc.localDescription });
         } else if (signal.type === 'answer') {
-          const pc = pcsRef.current[from];
-          if (pc) await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-        } else if (signal.type === 'candidate') {
-          const pc = pcsRef.current[from];
-          if (pc && signal.candidate) await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            await flushIce(from, pc);
+          }
+        } else if (signal.type === 'candidate' && signal.candidate) {
+          if (pc.remoteDescription) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(signal.candidate)); } catch { /* ignore */ }
+          } else {
+            pendingIceRef.current[from] = pendingIceRef.current[from] || [];
+            pendingIceRef.current[from].push(signal.candidate);
+          }
         }
       } catch (err) {
         console.error('signal handling error', err);
       }
     });
     return unsub;
-  }, [onSignal, getOrCreatePC, sendSignal]);
+  }, [onSignal, getOrCreatePC, sendSignal, flushIce]);
 
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current;
@@ -193,30 +270,28 @@ export function useWebRTC() {
     const stream = localStreamRef.current;
     if (!stream) return;
     if (camEnabledRef.current) {
-      stream.getVideoTracks().forEach((t) => { t.stop(); stream.removeTrack(t); });
-      Object.values(pcsRef.current).forEach((pc) => {
-        pc.getSenders().forEach((sender) => {
-          if (sender.track && sender.track.kind === 'video') pc.removeTrack(sender);
-        });
-      });
+      stream.getVideoTracks().forEach((t) => { t.enabled = false; });
       camEnabledRef.current = false;
       setCamEnabled(false);
+      return;
+    }
+    const existing = stream.getVideoTracks()[0];
+    if (existing) {
+      existing.enabled = true;
+      camEnabledRef.current = true;
+      setCamEnabled(true);
       setLocalStream(new MediaStream(stream.getTracks()));
       return;
     }
     try {
-      const camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const camStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
       const videoTrack = camStream.getVideoTracks()[0];
       if (!videoTrack) return;
       stream.addTrack(videoTrack);
       Object.values(pcsRef.current).forEach((pc) => pc.addTrack(videoTrack, stream));
-      Object.entries(pcsRef.current).forEach(async ([socketId, pc]) => {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          sendSignal(socketId, { type: 'offer', sdp: pc.localDescription });
-        } catch (e) { console.error(e); }
-      });
       camEnabledRef.current = true;
       setCamEnabled(true);
       setLocalStream(new MediaStream(stream.getTracks()));
@@ -224,9 +299,19 @@ export function useWebRTC() {
       console.error('camera error', err);
       setError('Could not access camera.');
     }
-  }, [sendSignal]);
+  }, []);
 
   const hangUp = useCallback(() => { stopLocal(); leaveVoice(); }, [stopLocal, leaveVoice]);
 
-  return { micEnabled, camEnabled, localStream, remoteStreams, error, toggleMic, toggleCam, hangUp, inCall: !!currentVoiceChannel };
+  return {
+    micEnabled,
+    camEnabled,
+    localStream,
+    remoteStreams,
+    error,
+    toggleMic,
+    toggleCam,
+    hangUp,
+    inCall: !!currentVoiceChannel,
+  };
 }
