@@ -44,38 +44,45 @@ function RemoteMedia({ streams }) {
   );
 }
 
+/** Music-only bar — no large video frame */
 function MusicPlayer({ music, onPause, onResume, onStop }) {
   if (!music?.videoId) return null;
-  const src = music.playing
-    ? `https://www.youtube.com/embed/${music.videoId}?autoplay=1&playsinline=1&rel=0`
-    : `https://www.youtube.com/embed/${music.videoId}?autoplay=0&playsinline=1&rel=0`;
+
+  const thumb = `https://i.ytimg.com/vi/${music.videoId}/mqdefault.jpg`;
+  const watchUrl = `https://www.youtube.com/watch?v=${music.videoId}`;
+  const embedSrc = music.playing
+    ? `https://www.youtube.com/embed/${music.videoId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1`
+    : `https://www.youtube.com/embed/${music.videoId}?autoplay=0&playsinline=1&controls=1&rel=0&modestbranding=1`;
 
   return (
     <div className="music-panel">
-      <div className="music-bar">
-        <div className="music-info">
-          <span>{music.playing ? 'Playing' : 'Paused'}: {music.title}</span>
-          <span className="music-by"> by {music.requestedBy}</span>
+      <div className="music-audio-bar">
+        <img className="music-thumb" src={thumb} alt="" />
+        <div className="music-meta">
+          <div className="music-title">{music.playing ? 'Now playing' : 'Paused'}</div>
+          <div className="music-track">{music.title}</div>
+          <div className="music-by">requested by {music.requestedBy}</div>
         </div>
         <div className="music-controls">
           {music.playing
             ? <button type="button" className="secondary" onClick={onPause}>Pause</button>
             : <button type="button" className="secondary" onClick={onResume}>Resume</button>}
           <button type="button" className="danger" onClick={onStop}>Stop</button>
+          <a className="music-open" href={watchUrl} target="_blank" rel="noopener noreferrer">
+            Open sound
+          </a>
         </div>
       </div>
-      {/* Visible player required for audio on iOS/Safari */}
-      <div className="music-player-wrap">
+      {/* Slim control strip only — not a full video player */}
+      <div className="music-audio-strip">
         <iframe
-          key={`${music.videoId}-${music.playing ? 'play' : 'pause'}`}
-          title="music"
-          src={src}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-          allowFullScreen
-          referrerPolicy="strict-origin-when-cross-origin"
+          key={`${music.videoId}-${music.playing ? '1' : '0'}`}
+          title="music-audio"
+          src={embedSrc}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen={false}
         />
       </div>
-      <p className="music-hint">Kung walang tunog: pindutin ang play button sa YouTube player sa taas.</p>
     </div>
   );
 }
@@ -155,7 +162,7 @@ export default function App() {
         <div className="messages">
           {messages.length === 0 && (
             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Join a voice channel for mic/video. Use /play with a YouTube link for music.
+              Join a voice channel, then /play with a YouTube link for music.
             </p>
           )}
           {messages.map((m) => (
@@ -227,7 +234,7 @@ export default function App() {
         <div style={{ marginTop: '1.5rem', padding: '0 0.35rem' }}>
           <h3>Music commands</h3>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Join a voice channel, then:
+            Join voice, then:
             <br />/play youtube-link
             <br />/pause /resume /stop
           </p>
