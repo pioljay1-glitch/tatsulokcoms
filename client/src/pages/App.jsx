@@ -5,8 +5,13 @@ import { useWebRTC } from '../hooks/useWebRTC';
 import { avatarSrc } from '../utils/avatar';
 import ProfileModal from '../components/ProfileModal';
 import MusicPlayer from '../components/MusicPlayer';
+import ChatAssistant from '../components/ChatAssistant';
 
-const TEXT_CHANNELS = [{ id: 'general', name: 'general' }, { id: 'random', name: 'random' }];
+const TEXT_CHANNELS = [
+  { id: 'general', name: 'general' },
+  { id: 'random', name: 'random' },
+  { id: 'ChatAssistant', name: 'ChatAssistant' },
+];
 const VOICE_CHANNELS = [{ id: 'Lobby', name: 'Lobby' }, { id: 'Gaming', name: 'Gaming' }];
 
 function RemoteTile({ stream }) {
@@ -42,6 +47,7 @@ export default function App() {
   const [showProfile, setShowProfile] = useState(false);
   const messagesEndRef = useRef(null);
   const localVideoRef = useRef(null);
+  const isAssistant = currentTextChannel === 'ChatAssistant';
 
   useEffect(() => { joinTextChannel(currentTextChannel || 'general'); }, []); // eslint-disable-line
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
@@ -113,26 +119,31 @@ export default function App() {
 
       <main className="main-area">
         <div className="channel-header"><span>#</span> {currentTextChannel}</div>
-        <div className="messages">
-          {messages.length === 0 && (
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              Call a user or join Video: Lobby. Allow camera + mic so both of you can see and hear each other.
-            </p>
-          )}
-          {messages.map((m) => (
-            <div key={m.id} className="message">
-              <div className="avatar"><img src={avatarSrc({ displayName: m.displayName, avatarUrl: m.avatarUrl })} alt="" /></div>
-              <div>
-                <div className="meta">
-                  <strong>{m.displayName}</strong> <span>@{m.username}</span>
-                  {' · '}{new Date(m.timestamp).toLocaleTimeString()}
+
+        {isAssistant ? (
+          <ChatAssistant userName={user?.displayName} />
+        ) : (
+          <div className="messages">
+            {messages.length === 0 && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                Open #ChatAssistant to hear a speaking AI and test your speaker.
+              </p>
+            )}
+            {messages.map((m) => (
+              <div key={m.id} className="message">
+                <div className="avatar"><img src={avatarSrc({ displayName: m.displayName, avatarUrl: m.avatarUrl })} alt="" /></div>
+                <div>
+                  <div className="meta">
+                    <strong>{m.displayName}</strong> <span>@{m.username}</span>
+                    {' · '}{new Date(m.timestamp).toLocaleTimeString()}
+                  </div>
+                  <div className="body">{m.text}</div>
                 </div>
-                <div className="body">{m.text}</div>
               </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
 
         {inCall && (
           <div className="media-area call-stage">
@@ -180,13 +191,15 @@ export default function App() {
           <div className="call-status-bar">Calling… <button type="button" className="danger" onClick={endCall}>Cancel</button></div>
         )}
 
-        <div className="message-input-bar">
-          <form onSubmit={handleSend}>
-            <input type="text" placeholder={`Message #${currentTextChannel}`}
-              value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} disabled={!connected} />
-            <button type="submit" disabled={!connected || !text.trim() || sending}>Send</button>
-          </form>
-        </div>
+        {!isAssistant && (
+          <div className="message-input-bar">
+            <form onSubmit={handleSend}>
+              <input type="text" placeholder={`Message #${currentTextChannel}`}
+                value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} disabled={!connected} />
+              <button type="submit" disabled={!connected || !text.trim() || sending}>Send</button>
+            </form>
+          </div>
+        )}
       </main>
 
       <aside className="member-sidebar">
