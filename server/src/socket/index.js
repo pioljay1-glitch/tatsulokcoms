@@ -9,54 +9,28 @@ import {
   getSocketUser,
   updateUserProfile,
 } from './presence.js';
+import { registerMusicHandlers, getMusic } from './music.js';
 
-/**
- * Create Socket.IO server and wire authentication + events.
- * Auth is taken from the Express session cookie (shared via cookie parser / session).
- */
 export function setupSocket(httpServer, sessionMiddleware) {
   const isProd = process.env.NODE_ENV === 'production';
   const clientUrl = process.env.CLIENT_URL || (isProd ? false : 'http://localhost:5173');
 
   const io = new Server(httpServer, {
-    cors: {
-      origin: clientUrl || true,
-      credentials: true,
-    },
-    // Allow session cookie to be sent
-    allowRequest: (req, callback) => {
-      callback(null, true);
-    },
+    cors: { origin: clientUrl || true, credentials: true },
+    allowRequest: (req, callback) => { callback(null, true); },
   });
 
-  // Share Express session with Socket.IO
   io.engine.use(sessionMiddleware);
 
   io.use(async (socket, next) => {
     try {
       const session = socket.request.session;
-      if (!session || !session.userId) {
-        return next(new Error('Unauthorized'));
-      }
-
-      // Load fresh user from DB to ensure account still exists
+      if (!session || !session.userId) return next(new Error('Unauthorized'));
       const user = await prisma.user.findUnique({
         where: { id: session.userId },
-        select: {
-          id: true,
-          username: true,
-          displayName: true,
-          email: true,
-          avatarUrl: true,
-          status: true,
-        },
+        select: { id: true, username: true, displayName: true, email: true, avatarUrl: true, status: true },
       });
-
-      if (!user) {
-        return next(new Error('Unauthorized'));
-      }
-
-      // Identity comes ONLY from authenticated session – never from client-supplied username
+      if (!user) return next(new Error('Unauthorized'));
       socket.user = user;
       next();
     } catch (err) {
@@ -68,22 +42,11 @@ export function setupSocket(httpServer, sessionMiddleware) {
   io.on('connection', async (socket) => {
     const user = socket.user;
     console.log(`[socket] ${user.username} connected (${socket.id})`);
-
     addConnection(socket, user);
-
-    // Persist online status
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { status: 'online' },
-    }).catch(() => {});
-
-    // Notify everyone of presence update
+    await prisma.user.update({ where: { id: user.id }, data: { status: 'online' } }).catch(() => {});
     io.emit('presence:update', getPresenceList());
-
-    // Send current presence + recent messages for default channel
     socket.emit('presence:list', getPresenceList());
 
-    // --- Text channels ---
     socket.on('channel:join', (channelId) => {
       if (typeof channelId !== 'string') return;
       const prev = getSocketUser(socket.id)?.textChannel;
@@ -105,8 +68,6 @@ export function setupSocket(httpServer, sessionMiddleware) {
           if (typeof ack === 'function') ack({ error: 'Empty message' });
           return;
         }
-
-        // Identity ALWAYS from authenticated socket user
         const message = await prisma.message.create({
           data: {
             channelId: String(channelId).slice(0, 64),
@@ -116,7 +77,6 @@ export function setupSocket(httpServer, sessionMiddleware) {
             text: cleanText,
           },
         });
-
         const out = {
           id: message.id,
           channelId: message.channelId,
@@ -127,7 +87,6 @@ export function setupSocket(httpServer, sessionMiddleware) {
           timestamp: message.timestamp.toISOString(),
           avatarUrl: user.avatarUrl || null,
         };
-
         io.to(`text:${channelId}`).emit('message:new', out);
         if (typeof ack === 'function') ack({ ok: true, message: out });
       } catch (err) {
@@ -159,37 +118,25 @@ export function setupSocket(httpServer, sessionMiddleware) {
         }));
         if (typeof ack === 'function') ack({ messages: out });
       } catch (err) {
-        console.error('messages:history error:', err);
         if (typeof ack === 'function') ack({ error: 'Failed to load history' });
       }
     });
 
-    // --- Voice signaling (WebRTC) ---
     socket.on('voice:join', (channelId) => {
       if (typeof channelId !== 'string') return;
       const prev = getSocketUser(socket.id)?.voiceChannel;
       if (prev) {
         socket.leave(`voice:${prev}`);
         socket.to(`voice:${prev}`).emit('voice:user-left', {
-          userId: user.id,
-          username: user.username,
-          displayName: user.displayName,
-          socketId: socket.id,
+          userId: user.id, username: user.username, displayName: user.displayName, socketId: socket.id,
         });
       }
       socket.join(`voice:${channelId}`);
       setVoiceChannel(socket.id, channelId);
-
-      // Tell existing members about the new peer
       socket.to(`voice:${channelId}`).emit('voice:user-joined', {
-        userId: user.id,
-        username: user.username,
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl || null,
-        socketId: socket.id,
+        userId: user.id, username: user.username, displayName: user.displayName,
+        avatarUrl: user.avatarUrl || null, socketId: socket.id,
       });
-
-      // Tell the joiner who is already in the room
       const room = io.sockets.adapter.rooms.get(`voice:${channelId}`);
       const peers = [];
       if (room) {
@@ -208,6 +155,7 @@ export function setupSocket(httpServer, sessionMiddleware) {
         }
       }
       socket.emit('voice:peers', peers);
+      socket.emit('music:state', getMusic(channelId));
       io.emit('presence:update', getPresenceList());
     });
 
@@ -215,10 +163,7 @@ export function setupSocket(httpServer, sessionMiddleware) {
       const info = getSocketUser(socket.id);
       if (info?.voiceChannel) {
         socket.to(`voice:${info.voiceChannel}`).emit('voice:user-left', {
-          userId: user.id,
-          username: user.username,
-          displayName: user.displayName,
-          socketId: socket.id,
+          userId: user.id, username: user.username, displayName: user.displayName, socketId: socket.id,
         });
         socket.leave(`voice:${info.voiceChannel}`);
         setVoiceChannel(socket.id, null);
@@ -226,19 +171,15 @@ export function setupSocket(httpServer, sessionMiddleware) {
       }
     });
 
-    // WebRTC signaling – relay only, identity from socket
     socket.on('voice:signal', ({ to, signal }) => {
       if (!to || !signal) return;
       io.to(to).emit('voice:signal', {
-        from: socket.id,
-        userId: user.id,
-        username: user.username,
-        displayName: user.displayName,
-        signal,
+        from: socket.id, userId: user.id, username: user.username, displayName: user.displayName, signal,
       });
     });
 
-    // Profile updates propagated to presence
+    registerMusicHandlers(socket, io, user, getSocketUser);
+
     socket.on('profile:updated', (updates) => {
       updateUserProfile(user.id, updates);
       io.emit('presence:update', getPresenceList());
@@ -247,25 +188,15 @@ export function setupSocket(httpServer, sessionMiddleware) {
     socket.on('disconnect', async () => {
       console.log(`[socket] ${user.username} disconnected (${socket.id})`);
       const result = removeConnection(socket.id);
-
-      // Leave voice room if any
       const info = result?.info;
       if (info?.voiceChannel) {
         socket.to(`voice:${info.voiceChannel}`).emit('voice:user-left', {
-          userId: user.id,
-          username: user.username,
-          displayName: user.displayName,
-          socketId: socket.id,
+          userId: user.id, username: user.username, displayName: user.displayName, socketId: socket.id,
         });
       }
-
       if (result?.wentOffline) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { status: 'offline' },
-        }).catch(() => {});
+        await prisma.user.update({ where: { id: user.id }, data: { status: 'offline' } }).catch(() => {});
       }
-
       io.emit('presence:update', getPresenceList());
     });
   });
