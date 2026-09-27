@@ -44,6 +44,42 @@ function RemoteMedia({ streams }) {
   );
 }
 
+function MusicPlayer({ music, onPause, onResume, onStop }) {
+  if (!music?.videoId) return null;
+  const src = music.playing
+    ? `https://www.youtube.com/embed/${music.videoId}?autoplay=1&playsinline=1&rel=0`
+    : `https://www.youtube.com/embed/${music.videoId}?autoplay=0&playsinline=1&rel=0`;
+
+  return (
+    <div className="music-panel">
+      <div className="music-bar">
+        <div className="music-info">
+          <span>{music.playing ? 'Playing' : 'Paused'}: {music.title}</span>
+          <span className="music-by"> by {music.requestedBy}</span>
+        </div>
+        <div className="music-controls">
+          {music.playing
+            ? <button type="button" className="secondary" onClick={onPause}>Pause</button>
+            : <button type="button" className="secondary" onClick={onResume}>Resume</button>}
+          <button type="button" className="danger" onClick={onStop}>Stop</button>
+        </div>
+      </div>
+      {/* Visible player required for audio on iOS/Safari */}
+      <div className="music-player-wrap">
+        <iframe
+          key={`${music.videoId}-${music.playing ? 'play' : 'pause'}`}
+          title="music"
+          src={src}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          referrerPolicy="strict-origin-when-cross-origin"
+        />
+      </div>
+      <p className="music-hint">Kung walang tunog: pindutin ang play button sa YouTube player sa taas.</p>
+    </div>
+  );
+}
+
 export default function App() {
   const { user, logout } = useAuth();
   const {
@@ -146,26 +182,7 @@ export default function App() {
           </div>
         )}
 
-        {music?.videoId && (
-          <div className="music-bar">
-            <div className="music-info">
-              <span>{music.playing ? 'Playing' : 'Paused'}: {music.title}</span>
-              <span className="music-by"> by {music.requestedBy}</span>
-            </div>
-            <div className="music-controls">
-              {music.playing
-                ? <button type="button" className="secondary" onClick={pauseMusic}>Pause</button>
-                : <button type="button" className="secondary" onClick={resumeMusic}>Resume</button>}
-              <button type="button" className="danger" onClick={stopMusic}>Stop</button>
-            </div>
-            {music.playing && (
-              <iframe title="music" width="0" height="0"
-                style={{ border: 0, position: 'absolute', width: 1, height: 1, opacity: 0 }}
-                src={`https://www.youtube.com/embed/${music.videoId}?autoplay=1&controls=0`}
-                allow="autoplay; encrypted-media" />
-            )}
-          </div>
-        )}
+        <MusicPlayer music={music} onPause={pauseMusic} onResume={resumeMusic} onStop={stopMusic} />
         {musicError && <div className="error-banner music-error">{musicError}</div>}
 
         {inCall && (
