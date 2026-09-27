@@ -20,6 +20,7 @@ export function useWebRTC() {
   const localStreamRef = useRef(null);
   const micEnabledRef = useRef(true);
   const camEnabledRef = useRef(false);
+  const audioElsRef = useRef({});
 
   const cleanupPeer = useCallback((socketId) => {
     const pc = pcsRef.current[socketId];
@@ -27,10 +28,40 @@ export function useWebRTC() {
       try { pc.close(); } catch {}
       delete pcsRef.current[socketId];
     }
+    const el = audioElsRef.current[socketId];
+    if (el) {
+      try { el.pause(); el.srcObject = null; el.remove(); } catch {}
+      delete audioElsRef.current[socketId];
+    }
     setRemoteStreams((prev) => {
       const next = { ...prev };
       delete next[socketId];
       return next;
+    });
+  }, []);
+
+  const attachRemoteAudio = useCallback((socketId, stream) => {
+    let el = audioElsRef.current[socketId];
+    if (!el) {
+      el = document.createElement('audio');
+      el.autoplay = true;
+      el.playsInline = true;
+      el.setAttribute('playsinline', 'true');
+      el.volume = 1;
+      document.body.appendChild(el);
+      audioElsRef.current[socketId] = el;
+    }
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
+    }
+    // Critical for iOS: explicitly play after track arrives
+    const tryPlay = () => {
+      const p = el.play();
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+    };
+    tryPlay();
+    stream.getAudioTracks().forEach((t) => {
+      t.onunmute = tryPlay;
     });
   }, []);
 
@@ -42,6 +73,11 @@ export function useWebRTC() {
     }
     Object.keys(pcsRef.current).forEach(cleanupPeer);
     pcsRef.current = {};
+    Object.keys(audioElsRef.current).forEach((id) => {
+      const el = audioElsRef.current[id];
+      try { el.pause(); el.srcObject = null; el.remove(); } catch {}
+    });
+    audioElsRef.current = {};
     setRemoteStreams({});
   }, [cleanupPeer]);
 
@@ -55,8 +91,11 @@ export function useWebRTC() {
       });
     }
     pc.ontrack = (event) => {
-      const stream = event.streams[0];
-      if (stream) setRemoteStreams((prev) => ({ ...prev, [socketId]: stream }));
+      const stream = event.streams[0] || new MediaStream([event.track]);
+      if (stream) {
+        setRemoteStreams((prev) => ({ ...prev, [socketId]: stream }));
+        attachRemoteAudio(socketId, stream);
+      }
     };
     pc.onicecandidate = (event) => {
       if (event.candidate) sendSignal(socketId, { type: 'candidate', candidate: event.candidate });
@@ -71,7 +110,7 @@ export function useWebRTC() {
         .catch((err) => console.error('createOffer error', err));
     }
     return pc;
-  }, [sendSignal, cleanupPeer]);
+  }, [sendSignal, cleanupPeer, attachRemoteAudio]);
 
   useEffect(() => {
     if (!currentVoiceChannel) {
@@ -86,7 +125,14 @@ export function useWebRTC() {
     let cancelled = false;
     (async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         localStreamRef.current = stream;
         setLocalStream(stream);
