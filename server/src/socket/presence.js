@@ -38,7 +38,6 @@ export function addConnection(socket, user) {
     socketIds: userSockets.get(userId),
   });
 
-  // Attach to socket for convenience
   socket.userId = userId;
   socket.username = username;
   socket.displayName = displayName;
@@ -89,11 +88,18 @@ export function getPresenceList() {
     status: p.status,
     textChannel: p.textChannel,
     voiceChannel: p.voiceChannel,
+    // first active socket for Call button targeting
+    socketId: p.socketIds && p.socketIds.size ? [...p.socketIds][0] : null,
   }));
 }
 
 export function getUserPresence(userId) {
   return presence.get(userId) || null;
+}
+
+export function getUserSocketIds(userId) {
+  const set = userSockets.get(userId);
+  return set ? [...set] : [];
 }
 
 export function getSocketUser(socketId) {
@@ -107,7 +113,6 @@ export function updateUserProfile(userId, updates) {
     if (updates.username) p.username = updates.username;
     if (updates.avatarUrl !== undefined) p.avatarUrl = updates.avatarUrl;
   }
-  // Also update all socket mappings
   const sockets = userSockets.get(userId);
   if (sockets) {
     for (const sid of sockets) {
